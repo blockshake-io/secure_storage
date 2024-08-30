@@ -1,10 +1,7 @@
-import 'dart:io';
-
-import 'package:biometric_storage/biometric_storage.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:logging_appenders/logging_appenders.dart';
+import 'package:secure_storage/secure_storage.dart';
 
 final MemoryAppender logMessages = MemoryAppender();
 
@@ -123,45 +120,42 @@ class MyAppState extends State<MyApp> {
                         authenticate == CanAuthenticateResponse.statusUnknown;
                 if (supportsAuthenticated) {
                   _authStorage = await BiometricStorage().getStorage(
-                      '${baseName}_authenticated',
+                      '${baseName}_authenticated_any',
                       options: StorageFileInitOptions());
                 }
                 _storage = await BiometricStorage()
-                    .getStorage('${baseName}_unauthenticated',
+                    .getStorage('${baseName}_authenticated_none',
                         options: StorageFileInitOptions(
-                          authenticationRequired: false,
+                          biometricAccessControl:
+                              BiometricAccessControl.biometryNone,
                         ));
                 if (supportsAuthenticated) {
-                  _customPrompt = await BiometricStorage()
-                      .getStorage('${baseName}_customPrompt',
-                          options: StorageFileInitOptions(
-                            androidAuthenticationValidityDuration:
-                                const Duration(seconds: 5),
-                            darwinTouchIDAuthenticationForceReuseContextDuration:
-                                const Duration(seconds: 5),
-                          ),
-                          promptInfo: const PromptInfo(
-                            iosPromptInfo: IosPromptInfo(
-                              saveTitle: 'Custom save title',
-                              accessTitle: 'Custom access title.',
-                            ),
-                            androidPromptInfo: AndroidPromptInfo(
-                              title: 'Custom title',
-                              subtitle: 'Custom subtitle',
-                              description: 'Custom description',
-                              negativeButton: 'Nope!',
-                            ),
-                          ));
+                  _customPrompt = await BiometricStorage().getStorage(
+                      '${baseName}_authenticated_currentset',
+                      options: StorageFileInitOptions(
+                          biometricAccessControl:
+                              BiometricAccessControl.biometryCurrentSet),
+                      promptInfo: const PromptInfo(
+                        iosPromptInfo: IosPromptInfo(
+                          saveTitle: 'Custom save title',
+                          accessTitle: 'Custom access title.',
+                        ),
+                        androidPromptInfo: AndroidPromptInfo(
+                          title: 'Custom title',
+                          subtitle: 'Custom subtitle',
+                          description: 'Custom description',
+                          negativeButton: 'Nope!',
+                        ),
+                      ));
                 }
                 setState(() {});
                 _logger.info('initiailzed $baseName');
               },
             ),
-            ...?_appArmorButton(),
             ...(_authStorage == null
                 ? []
                 : [
-                    const Text('Biometric Authentication',
+                    const Text('Biometric Authentication Any',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     StorageActions(
                         storageFile: _authStorage!,
@@ -171,7 +165,7 @@ class MyAppState extends State<MyApp> {
             ...?(_storage == null
                 ? null
                 : [
-                    const Text('Unauthenticated',
+                    const Text('Biometric Authentication None',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     StorageActions(
                         storageFile: _storage!,
@@ -181,7 +175,7 @@ class MyAppState extends State<MyApp> {
             ...?(_customPrompt == null
                 ? null
                 : [
-                    const Text('Custom Prompts w/ 5s auth validity',
+                    const Text('Biometric Authentication CurrentSet',
                         style: TextStyle(fontWeight: FontWeight.bold)),
                     StorageActions(
                         storageFile: _customPrompt!,
@@ -215,24 +209,6 @@ class MyAppState extends State<MyApp> {
       ),
     );
   }
-
-  List<Widget>? _appArmorButton() => kIsWeb || !Platform.isLinux
-      ? null
-      : [
-          ElevatedButton(
-            child: const Text('Check App Armor'),
-            onPressed: () async {
-              if (await BiometricStorage().linuxCheckAppArmorError()) {
-                _logger.info('Got an error! User has to authorize us to '
-                    'use secret service.');
-                _logger.info(
-                    'Run: `snap connect biometric-storage-example:password-manager-service`');
-              } else {
-                _logger.info('all good.');
-              }
-            },
-          )
-        ];
 }
 
 class StorageActions extends StatelessWidget {

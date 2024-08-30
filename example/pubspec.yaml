@@ -7,7 +7,7 @@ environment:
   sdk: '>=3.2.0 <4.0.0'
 
 dependencies:
-  biometric_storage:
+  secure_storage:
     path: ../
   flutter:
     sdk: flutter

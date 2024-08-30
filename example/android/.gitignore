@@ -1,9 +1,17 @@
 gradle-wrapper.jar
 /.gradle
 /captures/
+*.iml
+.gradle
+/local.properties
+/.idea/workspace.xml
+/.idea/libraries
+.DS_Store
+/build
+/captures
+/gradle
 /gradlew
 /gradlew.bat
-/local.properties
 GeneratedPluginRegistrant.java
 
 # Remember to never publicly share your keystore.

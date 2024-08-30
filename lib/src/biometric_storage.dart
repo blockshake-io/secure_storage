@@ -49,7 +49,19 @@ enum AuthExceptionCode {
   canceled,
   unknown,
   timeout,
-  linuxAppArmorDenied,
+}
+
+enum BiometricAccessControl {
+  biometryNone,
+  biometryAny,
+  // Android >= API 30
+  biometryCurrentSet,
+}
+
+BiometricAccessControl biometricAccessControlFromString(
+    String biometricAccessControlValue) {
+  return BiometricAccessControl.values
+      .firstWhere((c) => c.name == biometricAccessControlValue);
 }
 
 const _authErrorCodeMapping = {
@@ -83,82 +95,14 @@ class AuthException implements Exception {
 }
 
 class StorageFileInitOptions {
+  final BiometricAccessControl biometricAccessControl;
+
   StorageFileInitOptions({
-    Duration? androidAuthenticationValidityDuration,
-    Duration? darwinTouchIDAuthenticationAllowableReuseDuration,
-    this.darwinTouchIDAuthenticationForceReuseContextDuration,
-    @Deprecated(
-        'use use androidAuthenticationValidityDuration, iosTouchIDAuthenticationAllowableReuseDuration or iosTouchIDAuthenticationForceReuseContextDuration instead')
-    this.authenticationValidityDurationSeconds = -1,
-    this.authenticationRequired = true,
-    this.androidBiometricOnly = true,
-    this.darwinBiometricOnly = true,
-  })  : androidAuthenticationValidityDuration =
-            androidAuthenticationValidityDuration ??
-                (authenticationValidityDurationSeconds <= 0
-                    ? null
-                    : Duration(seconds: authenticationValidityDurationSeconds)),
-        darwinTouchIDAuthenticationAllowableReuseDuration =
-            darwinTouchIDAuthenticationAllowableReuseDuration ??
-                (authenticationValidityDurationSeconds <= 0
-                    ? null
-                    : Duration(seconds: authenticationValidityDurationSeconds));
-
-  @Deprecated(
-      'use use androidAuthenticationValidityDuration, iosTouchIDAuthenticationAllowableReuseDuration or iosTouchIDAuthenticationForceReuseContextDuration instead')
-  final int authenticationValidityDurationSeconds;
-
-  /// see https://developer.android.com/reference/android/security/keystore/KeyGenParameterSpec.Builder#setUserAuthenticationParameters(int,%20int)
-  final Duration? androidAuthenticationValidityDuration;
-
-  /// see https://developer.apple.com/documentation/localauthentication/lacontext/1622329-touchidauthenticationallowablere
-  /// > If the user unlocks the device using Touch ID within the specified time interval, then authentication for the receiver succeeds automatically, without prompting the user for Touch ID. This bypasses a scenario where the user unlocks the device and then is almost immediately prompted for another fingerprint.
-  /// and https://developer.apple.com/documentation/localauthentication/accessing_keychain_items_with_face_id_or_touch_id
-  /// > Note that this grace period applies specifically to device unlock with Touch ID, not keychain retrieval authentications
-  ///
-  /// If you want to avoid requiring authentication after a successful
-  /// keychain retrieval see [darwinTouchIDAuthenticationForceReuseContextDuration]
-  final Duration? darwinTouchIDAuthenticationAllowableReuseDuration;
-
-  /// To prevent forcing the user to authenticate again after unlocking once
-  /// we can reuse the `LAContext` object for the given amount of time.
-  /// see https://github.com/authpass/biometric_storage/pull/73
-  /// This is pretty much undocumented behavior, but works similar to
-  /// `androidAuthenticationValidityDuration`.
-  ///
-  /// See also [darwinTouchIDAuthenticationAllowableReuseDuration]
-  final Duration? darwinTouchIDAuthenticationForceReuseContextDuration;
-
-  /// Whether an authentication is required. if this is
-  /// false NO BIOMETRIC CHECK WILL BE PERFORMED! and the value
-  /// will simply be save encrypted. (default: true)
-  final bool authenticationRequired;
-
-  /// Only makes difference on Android, where if set true, you can't use
-  /// PIN/pattern/password to get the file.
-  /// On Android < 30 this will always be ignored. (always `true`)
-  /// https://github.com/authpass/biometric_storage/issues/12#issuecomment-900358154
-  ///
-  /// Also: this **must** be `true` if [androidAuthenticationValidityDuration]
-  /// is null.
-  /// https://github.com/authpass/biometric_storage/issues/12#issuecomment-902508609
-  final bool androidBiometricOnly;
-
-  /// Only for iOS and macOS:
-  /// Uses `.biometryCurrentSet` if true, `.userPresence` otherwise.
-  /// https://developer.apple.com/documentation/security/secaccesscontrolcreateflags/1392879-userpresence
-  final bool darwinBiometricOnly;
+    this.biometricAccessControl = BiometricAccessControl.biometryAny,
+  });
 
   Map<String, dynamic> toJson() => <String, dynamic>{
-        'androidAuthenticationValidityDurationSeconds':
-            androidAuthenticationValidityDuration?.inSeconds,
-        'darwinTouchIDAuthenticationAllowableReuseDurationSeconds':
-            darwinTouchIDAuthenticationAllowableReuseDuration?.inSeconds,
-        'darwinTouchIDAuthenticationForceReuseContextDurationSeconds':
-            darwinTouchIDAuthenticationForceReuseContextDuration?.inSeconds,
-        'authenticationRequired': authenticationRequired,
-        'androidBiometricOnly': androidBiometricOnly,
-        'darwinBiometricOnly': darwinBiometricOnly,
+        'biometricAccessControl': biometricAccessControl.name,
       };
 }
 
@@ -247,21 +191,6 @@ abstract class BiometricStorage extends PlatformInterface {
   /// the reason [CanAuthenticateResponse] why it is not supported.
   Future<CanAuthenticateResponse> canAuthenticate();
 
-  /// Returns true when there is an AppArmor error when trying to read a value.
-  ///
-  /// When used inside a snap, there might be app armor limitations
-  /// which lead to an error like:
-  /// org.freedesktop.DBus.Error.AccessDenied: An AppArmor policy prevents
-  /// this sender from sending this message to this recipient;
-  /// type="method_call", sender=":1.140" (uid=1000 pid=94358
-  /// comm="/snap/biometric-storage-example/x1/biometric_stora"
-  /// label="snap.biometric-storage-example.biometric (enforce)")
-  /// interface="org.freedesktop.Secret.Service" member="OpenSession"
-  /// error name="(unset)" requested_reply="0" destination=":1.30"
-  /// (uid=1000 pid=1153 comm="/usr/bin/gnome-keyring-daemon
-  /// --daemonize --login " label="unconfined")
-  Future<bool> linuxCheckAppArmorError();
-
   /// Retrieves the given biometric storage file.
   /// Each store is completely separated, and has it's own encryption and
   /// biometric lock.
@@ -304,10 +233,7 @@ class MethodChannelBiometricStorage extends BiometricStorage {
     if (kIsWeb) {
       return CanAuthenticateResponse.unsupported;
     }
-    if (Platform.isAndroid ||
-        Platform.isIOS ||
-        Platform.isMacOS ||
-        Platform.isLinux) {
+    if (Platform.isAndroid || Platform.isIOS) {
       final response = await _channel.invokeMethod<String>('canAuthenticate');
       final ret = _canAuthenticateMapping[response];
       if (ret == null) {
@@ -316,42 +242,6 @@ class MethodChannelBiometricStorage extends BiometricStorage {
       return ret;
     }
     return CanAuthenticateResponse.unsupported;
-  }
-
-  /// Returns true when there is an AppArmor error when trying to read a value.
-  ///
-  /// When used inside a snap, there might be app armor limitations
-  /// which lead to an error like:
-  /// org.freedesktop.DBus.Error.AccessDenied: An AppArmor policy prevents
-  /// this sender from sending this message to this recipient;
-  /// type="method_call", sender=":1.140" (uid=1000 pid=94358
-  /// comm="/snap/biometric-storage-example/x1/biometric_stora"
-  /// label="snap.biometric-storage-example.biometric (enforce)")
-  /// interface="org.freedesktop.Secret.Service" member="OpenSession"
-  /// error name="(unset)" requested_reply="0" destination=":1.30"
-  /// (uid=1000 pid=1153 comm="/usr/bin/gnome-keyring-daemon
-  /// --daemonize --login " label="unconfined")
-  @override
-  Future<bool> linuxCheckAppArmorError() async {
-    if (!Platform.isLinux) {
-      return false;
-    }
-    final tmpStorage = await getStorage('appArmorCheck',
-        options: StorageFileInitOptions(authenticationRequired: false));
-    _logger.finer('Checking app armor');
-    try {
-      await tmpStorage.read();
-      _logger.finer('Everything okay.');
-      return false;
-    } on AuthException catch (e, stackTrace) {
-      if (e.code == AuthExceptionCode.linuxAppArmorDenied) {
-        return true;
-      }
-      _logger.warning(
-          'Unknown error while checking for app armor.', e, stackTrace);
-      // some other weird error?
-      rethrow;
-    }
   }
 
   /// Retrieves the given biometric storage file.
@@ -436,8 +326,6 @@ class MethodChannelBiometricStorage extends BiometricStorage {
         // so we use the same parameter.
         'iosPromptInfo': promptInfo.macOsPromptInfo._toJson()
       };
-    } else if (Platform.isLinux) {
-      return <String, dynamic>{};
     } else {
       // Windows has no method channel implementation
       // Web has a Noop implementation.
@@ -460,17 +348,6 @@ class MethodChannelBiometricStorage extends BiometricStorage {
               ),
               stackTrace,
             );
-          }
-          if (error.details is Map) {
-            final message = error.details['message'] as String;
-            if (message.contains('org.freedesktop.DBus.Error.AccessDenied') ||
-                message.contains('AppArmor')) {
-              _logger.fine('Got app armor error.');
-              return Future<T>.error(
-                  AuthException(
-                      AuthExceptionCode.linuxAppArmorDenied, error.message!),
-                  stackTrace);
-            }
           }
         }
         return Future<T>.error(error, stackTrace);
